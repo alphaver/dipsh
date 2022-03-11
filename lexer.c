@@ -8,7 +8,8 @@ typedef enum dipshp_parse_state_tag
 {
     dipshp_waiting_token,
     dipshp_reading_word,
-    dipshp_read_one_amp_bar_gt,
+    dipshp_read_non_ws_delim,
+    dipshp_read_dbl_amp_bar_gt,
     dipshp_reading_escape_char,
     dipshp_end_of_stream
 }
@@ -21,10 +22,11 @@ struct dipsh_lexer_state_tag
     int line;
     char *error;
     dipshp_parse_state parse_state;
+    int quotes_on;
 };
 
 static const char dipshp_ws[] = " \t\v\n";
-static const char dipshp_non_ws_delims[] = "&|;<>(){}\n";
+static const char dipshp_non_ws_delims[] = "&|;<>(){}";
 
 static int
 dipshp_is_ws(
@@ -35,12 +37,24 @@ dipshp_is_ws(
 }
 
 static int
+dipshp_is_non_ws_delim(
+    char c
+)
+{
+    return strchr(dipshp_non_ws_delims, c);
+}
+
+static int
 dipshp_is_delim(
     char c
 )
 {
-    return strchr(dipshp_ws, c) || strchr(dipshp_non_ws_delims, c);
+    return dipshp_is_ws(c) || dipshp_is_non_ws_delim(c);
 }
+
+#define DIPSHP_SET_STATE_ERROR(st, fmt, ...) asprintf(&st->error, fmt, __VA_ARGS__)
+#define DIPSHP_UNEXPECTED_CHAR  "unexpected character: '%d'"
+#define DIPSHP_UNEXPECTED_STATE "unexpected state"
 
 dipsh_lexer_state *
 dipsh_lexer_state_init()
@@ -51,6 +65,7 @@ dipsh_lexer_state_init()
     st->word_capacity = 1;
     st->parse_state = dipshp_waiting_token;
     st->error = NULL;
+    st->quotes_on = 0;
     return st;
 }
 
@@ -89,6 +104,15 @@ dipshp_append_character(
 
 }
 
+static void
+dipshp_flush_token(
+    dipsh_lexer_state *state,
+    dipsh_token *token,
+    dipsh_token_type type
+)
+{
+}
+
 static int
 dipshp_handle_waiting_token(
     dipsh_lexer_state *state,
@@ -97,13 +121,28 @@ dipshp_handle_waiting_token(
 )
 {
     if (EOF == c || dipshp_is_ws(c)) {
+        state->parse_state = EOF == c
+            ? dipshp_end_of_stream
+            : dipshp_waiting_token;
         return dipsh_lexer_no_token;
-    } else if ('&' == c || '|' == c || '>' == c) {
+    } else if (dipshp_is_non_ws_delim(c)) {
+        state->parse_state = dipshp_read_non_ws_delim;
         dipshp_append_character(state, c);
-        state = dipshp_read_one_amp_bar_gt;
+        return dipsh_lexer_no_token;
+    } else if ('"' == c) {
+        state->quotes_on = 1;
+        state->parse_state = dipshp_reading_escape_char;
+        return dipsh_lexer_no_token;
+    } else if ('\\' == c) {
+        state->parse_state = dipshp_reading_escape_char;
         return dipsh_lexer_no_token;
     } else if (isprint(c)) {
+        state->parse_state = dipshp_reading_word;
         dipshp_append_character(state, c);
+        return dipsh_lexer_no_token;
+    } else {
+        DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_CHAR, c);
+        return dipsh_lexer_error;
     }
 }
 
@@ -114,15 +153,100 @@ dipshp_handle_reading_word(
     dipsh_token *token
 )
 {
+    if (EOF == c || dipshp_is_ws(c)) {
+        dipshp_flush_token(state, token, dipsh_token_word);
+        state->parse_state = EOF == c
+            ? dipshp_end_of_stream
+            : dipshp_waiting_token;
+        return dipsh_lexer_new_token;
+    } else if (dipshp_is_non_ws_delim(c)) {
+        dipshp_flush_token(state, token, dipsh_token_word);
+        dipshp_append_character(state, c);
+        state->parse_state = dipshp_read_non_ws_delim;
+        return dipsh_lexer_new_token;
+    } else if ('"' == c) {
+        state->quotes_on = 1;
+        state->parse_state = dipshp_reading_escape_char;
+        return dipsh_lexer_no_token;
+    } else if ('\\' == c) {
+        state->parse_state = dipshp_reading_escape_char;
+        return dipsh_lexer_no_token;
+    } else if (isprint(c)) {
+        dipshp_append_character(state, c);
+        return dipsh_lexer_no_token;
+    } else {
+        DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_CHAR, c);
+        return dipsh_lexer_error;
+    }
 }
 
 static int
-dipshp_handle_read_one_amp_bar_gt(
+dipshp_handle_read_non_ws_delim(
     dipsh_lexer_state *state,
     int c,
     dipsh_token *token
 )
 {
+    if (EOF == c || dipshp_is_ws(c)) {
+        dipshp_flush_token(state, token, dipsh_delim_to_type(*state->word));
+        state->parse_state = EOF == c 
+            ? dipshp_end_of_stream
+            : dipshp_waiting_token;
+        return dipsh_lexer_new_token;
+    } else if (('&' == c || '|' == c || '>' == c) && (*state->word == c)) {
+        dipshp_append_character(state, c);
+        state->parse_state = dipshp_read_dbl_amp_bar_gt;
+        return dipsh_lexer_no_token;
+    } else if (dipshp_is_non_ws_delim(c)) {
+        dipshp_flush_token(state, token, dipsh_delim_to_type(*state->word));
+        dipshp_append_character(state, c);
+        return dipsh_lexer_new_token;
+    } else if ('"' == c) {
+        dipshp_flush_token(state, token, dipsh_delim_to_type(*state->word));
+        state->quotes_on = 1;
+        state->parse_state = dipshp_reading_escape_char;
+        return dipsh_lexer_new_token;
+    } else if ('\\' == c) {
+        dipshp_flush_token(state, token, dipsh_delim_to_type(*state->word));
+        state->parse_state = dipshp_reading_escape_char;
+        return dipsh_lexer_new_token;
+    } else if (isprint(c)) {
+        dipshp_flush_token(state, token, dipsh_delim_to_type(*state->word));
+        state->parse_state = dipshp_reading_word;
+        return dipsh_lexer_new_token;
+    } else {
+        DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_CHAR, c);
+        return dipsh_lexer_error;
+    }
+}
+
+static int
+dipshp_handle_read_dbl_amp_bar_gt(
+    dipsh_lexer_state *state,
+    int c,
+    dipsh_token *token
+)
+{
+    dipshp_flush_token(state, token, dipsh_dbl_token_to_type(state->word));
+    if (EOF == c) {
+        state->parse_state = dipshp_end_of_stream;
+    } else if (dipshp_is_ws(c)) {
+        state->parse_state = dipshp_waiting_token;
+    } else if (dipshp_is_non_ws_delim(c)) {
+        dipshp_append_character(state, c);
+        state->parse_state = dipshp_read_non_ws_delim;
+    } else if ('"' == c) {
+        state->quotes_on = 1;
+        state->parse_state = dipshp_reading_escape_char;
+    } else if ('\\' == c) {
+        state->parse_state = dipshp_reading_escape_char;
+    } else if (isprint(c)) {
+        state->parse_state = dipshp_reading_word;
+    } else {
+        DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_CHAR, c);
+        return dipsh_lexer_error;
+    }
+    return dipsh_lexer_new_token;
 }
 
 static int
@@ -132,8 +256,19 @@ dipshp_handle_reading_escape_char(
     dipsh_token *token
 )
 {
+    if ('"' == c && state->quotes_on) {
+        state->quotes_on = 0;
+        state->parse_state = dipshp_reading_word;
+        return dipsh_lexer_no_token;
+    } else if (isprint(c)) {
+        dipshp_append_character(state, c);
+        state->parse_state = dipshp_reading_word;
+        return dipsh_lexer_no_token;
+    } else {
+        DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_CHAR, c);
+        return dipsh_lexer_error;
+    }
 }
-
 
 int
 dipsh_lexer_next_token(
@@ -142,19 +277,24 @@ dipsh_lexer_next_token(
     dipsh_token *token
 )
 {
-    if ('\n' == c)
+    if ('\n' == c) {
         ++state->line;
+        c = ';';
+    }
     switch (state->parse_state) {
     case dipshp_waiting_token:
         return dipshp_handle_waiting_token(state, c, token);
     case dipshp_reading_word:
         return dipshp_handle_reading_word(state, c, token);
-    case dipshp_read_one_amp_bar_gt:
-        return dipshp_handle_read_one_amp_bar_gt(state, c, token);
+    case dipshp_read_non_ws_delim:
+        return dipshp_handle_read_non_ws_delim(state, c, token);
+    case dipshp_read_dbl_amp_bar_gt:
+        return dipshp_handle_read_dbl_amp_bar_gt(state, c, token);
     case dipshp_reading_escape_char:
         return dipshp_handle_reading_escape_char(state, c, token);
     default:
-
+        DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_STATE);
+        return dipsh_lexer_error;
     }
 }
 

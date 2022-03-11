@@ -16,7 +16,7 @@ typedef enum dipsh_token_type_tag
     dipsh_token_close_paren,    /* ) */
     dipsh_token_open_brace,     /* { */
     dipsh_token_close_brace,    /* } */
-    dipsh_token_newline,        /* \n */
+    dipsh_token_error           /* nothing above */
 }
 dipsh_token_type;
 
@@ -27,6 +27,17 @@ typedef struct dipsh_token_tag
     const char *value;
 }
 dipsh_token;
+
+
+dipsh_token_type
+dipsh_delim_to_type(
+    char delim
+);
+
+dipsh_token_type
+dipsh_dbl_delim_to_type(
+    const char *delim
+);
 
 int
 dipsh_token_init(

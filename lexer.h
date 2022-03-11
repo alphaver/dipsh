@@ -30,7 +30,7 @@ enum
 {
     dipsh_lexer_no_token,
     dipsh_lexer_new_token,
-    dipsh_lexer_token_error
+    dipsh_lexer_error
 };
 
 /* accepts a character and returns a token (if avaliable), or reports an error
@@ -44,7 +44,7 @@ enum
  *         produce a token
  *     dipsh_lexer_new_token   - the character was accepted, and a new token is
  *         produced (returned via token parameter) 
- *     dipsh_lexer_token_error - the character wasn't accepted for some reason 
+ *     dipsh_lexer_error - the character wasn't accepted for some reason 
  *         (can be found out via dipsh_lexer_state_get_error) */
 
 int
