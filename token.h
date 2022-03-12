@@ -24,10 +24,14 @@ typedef struct dipsh_token_tag
 {
     dipsh_token_type type;
     int line;
-    const char *value;
+    char *value;
 }
 dipsh_token;
 
+const char *
+dipsh_type_to_str(
+    dipsh_token_type type
+);
 
 dipsh_token_type
 dipsh_delim_to_type(

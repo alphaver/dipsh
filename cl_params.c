@@ -1,4 +1,5 @@
 #include "cl_params.h"
+#include <stddef.h>
 
 dipsh_cl_params *
 dipsh_read_cl_params(int argc, char **argv)

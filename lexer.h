@@ -17,6 +17,11 @@ dipsh_lexer_state_destroy(
 );
 
 int
+dipsh_lexer_state_is_idle(
+    const dipsh_lexer_state *state
+);
+
+int
 dipsh_lexer_state_get_line(
     const dipsh_lexer_state *state
 );
@@ -66,7 +71,7 @@ dipsh_token_list;
 typedef struct dipsh_tokenize_error_tag
 {
     int line;
-    const char *message;
+    char *message;
 }
 dipsh_tokenize_error;
 
@@ -95,7 +100,7 @@ dipsh_tokenize_stream(
 );
 
 void
-dipsh_clean_list(
+dipsh_clean_token_list(
     dipsh_token_list *list
 );
 
