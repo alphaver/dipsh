@@ -12,6 +12,9 @@ typedef enum dipsh_token_type_tag
     dipsh_token_lt,             /* < */
     dipsh_token_gt,             /* > */
     dipsh_token_dbl_gt,         /* >> */
+    dipsh_token_digits_lt,      /* [0-9]+< */
+    dipsh_token_digits_gt,      /* [0-9]+> */
+    dipsh_token_digits_dbl_gt,  /* [0-9]+>> */
     dipsh_token_open_paren,     /* ( */
     dipsh_token_close_paren,    /* ) */
     dipsh_token_open_brace,     /* { */

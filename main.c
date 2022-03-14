@@ -19,11 +19,39 @@ dipshp_append_buffer(
 }
 
 static int
+dipshp_is_escaped_by_bs(
+    const char *str,
+    const char *char_pos
+)
+{
+    --char_pos;
+    int backslashes = 0;
+    for (; *char_pos == '\\' && char_pos >= str; --char_pos)
+        ++backslashes;
+    return 1 == backslashes % 2;
+}
+
+static int
+dipshp_num_non_escaped_quotes(
+    const char *str
+)
+{
+    int result = 0;
+    const char *pos = str;
+    while (NULL != (pos = strchr(pos, '"'))) {
+        if (!dipshp_is_escaped_by_bs(str, pos))
+            ++result;
+        ++pos;
+    }
+    return result;
+}
+
+static int
 dipshp_interactive_shell()
 {
     for (;;) {
         printf("> ");
-        int non_escaped_nl_found = 0;
+        int non_escaped_nl_found = 0, non_escaped_quotes = 0;
         char *read_str = calloc(1, 1), read_buf[DIPSHP_BUF_SIZE] = {0};
         while (!non_escaped_nl_found) {
             char *fgets_ret = fgets(read_buf, DIPSHP_BUF_SIZE, stdin);
@@ -32,12 +60,11 @@ dipshp_interactive_shell()
                 goto out;
             }
             dipshp_append_buffer(&read_str, read_buf);
+            non_escaped_quotes += dipshp_num_non_escaped_quotes(read_buf);
             char *nl_pos = strrchr(read_buf, '\n');
             if (nl_pos) {
-                int backslashes = 0;
-                for (char *pos = nl_pos - 1; *pos == '\\' && pos >= read_buf; --pos)
-                    ++backslashes;
-                non_escaped_nl_found = 0 == backslashes % 2;
+                non_escaped_nl_found = 0 == non_escaped_quotes % 2 &&
+                    !dipshp_is_escaped_by_bs(read_buf, nl_pos);
             }
         }
         dipsh_tokenize_error err;
