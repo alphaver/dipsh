@@ -31,8 +31,8 @@ struct dipsh_lexer_state_tag
     int quotes_on;
 };
 
-static const char dipshp_ws[] = " \t\v\n";
-static const char dipshp_non_ws_delims[] = "&|;<>(){}";
+static const char dipshp_ws[] = " \t\v";
+static const char dipshp_non_ws_delims[] = "&|;<>(){}\n";
 
 static int
 dipshp_is_ws(
@@ -58,7 +58,8 @@ dipshp_is_delim(
     return dipshp_is_ws(c) || dipshp_is_non_ws_delim(c);
 }
 
-#define DIPSHP_SET_STATE_ERROR(st, fmt, ...) asprintf(&st->error, fmt, __VA_ARGS__)
+#define DIPSHP_SET_STATE_ERROR(st, fmt, ...) \
+    asprintf(&st->error, fmt, __VA_ARGS__)
 #define DIPSHP_UNEXPECTED_CHAR  "unexpected character: '%d'"
 #define DIPSHP_UNEXPECTED_STATE "unexpected state '%d'"
 
@@ -220,7 +221,7 @@ dipshp_handle_reading_quoted_word(
         state->quotes_on = 0;
         state->parse_state = dipshp_reading_word;
         return dipsh_lexer_no_token;
-    } else if (isprint(c) || dipshp_is_ws(c)) {
+    } else if (isprint(c) || '\n' == c || dipshp_is_ws(c)) {
         dipshp_append_character(state, c);
         return dipsh_lexer_no_token;
     } else {
@@ -371,35 +372,42 @@ dipsh_lexer_next_token(
     dipsh_token *token
 )
 {
-    if ('\n' == c) {
-        ++state->line;
-        if (!dipsh_lexer_state_is_idle(state)) {
-            c = ';';
-        }
-    }
+    int ret;
     switch (state->parse_state) {
     case dipshp_waiting_token:
-        return dipshp_handle_waiting_token(state, c, token);
+        ret = dipshp_handle_waiting_token(state, c, token); 
+        break;
     case dipshp_reading_word:
-        return dipshp_handle_reading_word(state, c, token);
+        ret = dipshp_handle_reading_word(state, c, token); 
+        break;
     case dipshp_reading_quoted_word:
-        return dipshp_handle_reading_quoted_word(state, c, token);
+        ret = dipshp_handle_reading_quoted_word(state, c, token); 
+        break;
     case dipshp_reading_escape_char:
-        return dipshp_handle_reading_escape_char(state, c, token);
+        ret = dipshp_handle_reading_escape_char(state, c, token); 
+        break;
     case dipshp_reading_digits:
-        return dipshp_handle_reading_digits(state, c, token);
+        ret = dipshp_handle_reading_digits(state, c, token); 
+        break;
     case dipshp_read_non_ws_delim:
-        return dipshp_handle_read_non_ws_delim(state, c, token);
+        ret = dipshp_handle_read_non_ws_delim(state, c, token); 
+        break;
     case dipshp_read_dbl_amp_bar_gt:
-        return dipshp_handle_read_dbl_amp_bar_gt(state, c, token);
+        ret = dipshp_handle_read_dbl_amp_bar_gt(state, c, token);
+        break;
     case dipshp_read_digits_lt_gt:
-        return dipshp_handle_read_digits_lt_gt(state, c, token);
+        ret = dipshp_handle_read_digits_lt_gt(state, c, token);
+        break;
     case dipshp_read_digits_dbl_gt:
-        return dipshp_handle_read_digits_dbl_gt(state, c, token);
+        ret = dipshp_handle_read_digits_dbl_gt(state, c, token);
+        break;
     default:
         DIPSHP_SET_STATE_ERROR(state, DIPSHP_UNEXPECTED_STATE, state->parse_state);
-        return dipsh_lexer_error;
+        ret = dipsh_lexer_error;
     }
+    if ('\n' == c)
+        ++state->line;
+    return ret;
 }
 
 int

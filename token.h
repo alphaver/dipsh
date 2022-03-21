@@ -19,6 +19,7 @@ typedef enum dipsh_token_type_tag
     dipsh_token_close_paren,    /* ) */
     dipsh_token_open_brace,     /* { */
     dipsh_token_close_brace,    /* } */
+    dipsh_token_newline,        /* \n */
     dipsh_token_error           /* nothing above */
 }
 dipsh_token_type;

@@ -27,6 +27,7 @@ const dipshp_token_traits token_traits[] = {
     { dipsh_token_close_paren, "close_paren", ")" },
     { dipsh_token_open_brace, "open_brace", "{" },
     { dipsh_token_close_brace, "close_brace", "}" },
+    { dipsh_token_newline, "newline", "\n" },
     { dipsh_token_error, "error", NULL },
 };
 
