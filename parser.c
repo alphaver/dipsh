@@ -609,8 +609,11 @@ dipshp_parser_next_symbol(
         case dipshp_parse_reduce: 
             dipshp_handle_reduce(state, action);
             break;
-        case dipshp_parse_accept:
+        case dipshp_parse_accept: {
+            dipshp_parse_action acc_act = { dipshp_parse_reduce, 0 };
+            dipshp_handle_reduce(state, &acc_act);
             return dipsh_parser_accepted;
+        }
         default:
             if (symb->type & dipsh_symbol_terminal) {
                 DIPSHP_SET_STATE_ERROR_VA(

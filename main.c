@@ -147,7 +147,7 @@ dipshp_get_to_command(
     const dipsh_symbol *root
 )
 {
-    if (dipsh_symbol_strings != root->type)
+    if (dipsh_symbol_script != root->type)
         return NULL;
     const dipsh_nonterminal *nonterm_symb = (const dipsh_nonterminal *)root;
     const dipsh_nonterminal_child *children = nonterm_symb->children_list;
@@ -155,6 +155,8 @@ dipshp_get_to_command(
         warnx("we don't support multiple strings as for now");
         return NULL;
     }
+    nonterm_symb = (const dipsh_nonterminal *)children->child;
+    children = nonterm_symb->children_list;
     while (dipsh_symbol_command != nonterm_symb->symb.type) {
         nonterm_symb = (const dipsh_nonterminal *)children->child;
         if (dipsh_symbol_command == nonterm_symb->symb.type)
@@ -229,8 +231,10 @@ dipshp_build_argv_from_command_subtree(
         }
     } else {
         warnx("we don't support redirections yet");
-        dipshp_clean_argv(*argv);
-        *argv = NULL;
+        if (*argv) {
+            dipshp_clean_argv(*argv);
+            *argv = NULL;
+        }
     }
 }
 
@@ -264,7 +268,7 @@ dipshp_execute_tree(
         waitpid(proc_pid, &wst, 0);
     } else if (0 == proc_pid) {
         execvp(argv[0], argv);
-        warn(argv[0]);
+        err(1, argv[0]);
     } else {
         perror("fork");
     }
