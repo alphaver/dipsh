@@ -114,4 +114,9 @@ dipsh_parse_token_list(
     char **parser_error
 );
 
+void
+dipsh_make_ast(
+    dipsh_symbol **parse_tree_root
+);
+
 #endif /* _DIPSH_PARSER_H_ */

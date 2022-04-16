@@ -314,6 +314,7 @@ dipshp_interactive_shell()
         int parser_ret = dipsh_parse_token_list(list, &root, &parser_err);
         puts("parsing results:");
         if (dipsh_parser_accepted == parser_ret) {
+            dipsh_make_ast(&root);
             dipshp_print_parse_tree(root);
         } else {
             char *esc_msg = dipshp_escape_non_printables(parser_err);
@@ -321,8 +322,10 @@ dipshp_interactive_shell()
             free(esc_msg);
             free(parser_err);
         }
-        dipshp_execute_tree(root);
-        dipsh_symbol_clear(root); 
+        if (root) {
+            /* dipshp_execute_tree(root); */
+            dipsh_symbol_clear(root); 
+        }
         dipsh_clean_token_list(list);
         free(read_str);
         if (feof(stdin))
@@ -367,6 +370,7 @@ dipshp_execute_script(
     int parser_ret = dipsh_parse_token_list(list, &root, &parser_err);
     puts("parsing results:");
     if (dipsh_parser_accepted == parser_ret) {
+        dipsh_make_ast(&root);
         dipshp_print_parse_tree(root);
     } else {
         char *esc_msg = dipshp_escape_non_printables(parser_err);
@@ -375,7 +379,7 @@ dipshp_execute_script(
         free(parser_err);
         goto exit;
     }
-    dipshp_execute_tree(root);
+    /* dipshp_execute_tree(root); */
     ret = 0;
 exit:
     dipsh_symbol_clear(root); 

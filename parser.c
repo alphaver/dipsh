@@ -1,6 +1,7 @@
 #include "parser.h"
 #include <stdlib.h>
 #include <string.h>
+#include <err.h>
 
 typedef struct dipshp_symbol_traits_tag
 {
@@ -758,4 +759,140 @@ dipsh_parse_token_list(
 
     dipsh_parser_state_destroy(state);
     return parser_ret;
+}
+
+static void
+dipshp_prune_terminals(
+    dipsh_nonterminal_child **list
+)
+{
+    dipsh_nonterminal_child **curr = list;
+    while (*curr) {
+        if ((*curr)->child->type & dipsh_symbol_terminal) {
+            dipsh_nonterminal_child *temp = *curr;
+            *curr = (*curr)->next;
+            dipsh_symbol_clear(temp->child);
+            free(temp);
+        } else {
+            curr = &((*curr)->next);
+        }
+    }
+}
+
+static void
+dipshp_flatten_left_recursion(
+    dipsh_symbol **parse_tree_root,
+    dipsh_symbol_type symb_to_flatten,
+    int preserve_terminals
+)
+{
+    dipsh_nonterminal_child *flat_children = NULL;
+    dipsh_nonterminal_child *root_children =
+        (*(dipsh_nonterminal **)parse_tree_root)->children_list;
+    if (symb_to_flatten != root_children->child->type)
+        return;
+    while (root_children) {
+        dipsh_nonterminal_child *temp = NULL;
+        if (symb_to_flatten == root_children->child->type) {
+            temp = root_children;
+            root_children = root_children->next;
+        }
+        dipsh_nonterminal_child **root_children_end = &root_children;
+        while (*root_children_end)
+            root_children_end = &((*root_children_end)->next);
+        *root_children_end = flat_children;
+        flat_children = root_children;
+        if (temp) {
+            root_children = ((dipsh_nonterminal *)temp->child)->children_list;
+            free(temp->child);
+            free(temp);
+        } else {
+            root_children = NULL; 
+        }
+    }
+    if (!preserve_terminals)
+        dipshp_prune_terminals(&flat_children);
+    (*(dipsh_nonterminal **)parse_tree_root)->children_list = flat_children;
+}
+
+#define DIPSHP_DEFINE_FLATTEN_FUNCTION(sn, fsn, isn, pt)                       \
+static void                                                                    \
+dipshp_flatten_##sn(                                                           \
+    dipsh_symbol **sn##_root                                                   \
+)                                                                              \
+{                                                                              \
+    dipshp_flatten_left_recursion(sn##_root, dipsh_symbol_##fsn, pt);          \
+    dipsh_nonterminal_child *children =                                        \
+        (*(dipsh_nonterminal **)sn##_root)->children_list;                     \
+    while (children) {                                                         \
+        if (dipsh_symbol_##isn == children->child->type)                       \
+            dipshp_flatten_##isn(&children->child);                            \
+        children = children->next;                                             \
+    }                                                                          \
+}
+
+static void
+dipshp_flatten_command(
+    dipsh_symbol **command_root
+)
+{
+    dipshp_flatten_left_recursion(command_root, dipsh_symbol_command, 1);
+}
+
+DIPSHP_DEFINE_FLATTEN_FUNCTION(pipe, pipe, command, 0)
+DIPSHP_DEFINE_FLATTEN_FUNCTION(and_or, and_or, pipe, 1)
+DIPSHP_DEFINE_FLATTEN_FUNCTION(seq_bg_start, seq_bg, and_or, 1)
+DIPSHP_DEFINE_FLATTEN_FUNCTION(script, strings, seq_bg_start, 0)
+
+static void
+dipshp_clean_chains_int(
+    dipsh_symbol **subtree_root
+)
+{
+    if (!((*subtree_root)->type & dipsh_symbol_nonterminal))
+        return;
+    dipsh_nonterminal_child *children;
+    do {
+        children = (*(dipsh_nonterminal **)subtree_root)->children_list;
+        int in_chain = !children->next && 
+            (children->child->type & dipsh_symbol_nonterminal);
+        if (in_chain) {
+            dipsh_nonterminal *temp = *(dipsh_nonterminal **)subtree_root;
+            *subtree_root = children->child;
+            free(children);
+            free(temp);
+        } else {
+            break;
+        }
+    } while (1);
+    children = (*(dipsh_nonterminal **)subtree_root)->children_list;
+    while (children) {
+        if (children->child->type & dipsh_symbol_nonterminal)
+            dipshp_clean_chains_int(&children->child);
+        children = children->next;
+    }
+}
+
+static void
+dipshp_clean_chains(
+    dipsh_symbol **parse_tree_root
+)
+{
+    dipsh_nonterminal_child *children =
+        (*(dipsh_nonterminal **)parse_tree_root)->children_list;
+    while (children) {
+        dipshp_clean_chains_int(&children->child);
+        children = children->next;
+    } 
+}
+
+void
+dipsh_make_ast(
+    dipsh_symbol **parse_tree_root
+)
+{
+    if (dipsh_symbol_script != (*parse_tree_root)->type)
+        return;
+    dipshp_flatten_script(parse_tree_root);
+    dipshp_clean_chains(parse_tree_root);
 }
