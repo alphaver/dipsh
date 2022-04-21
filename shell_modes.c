@@ -1,6 +1,7 @@
 #include "shell_modes.h"
 #include "lexer.h"
 #include "parser.h"
+#include "execute.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -177,8 +178,12 @@ dipshp_handle_parsed_list(
         free(parser_err);
         return 1;
     }
-    if (root)
+    if (root) {
+        int exec_ret = dipsh_execute_ast(root);
+        if (0 != exec_ret)
+            warnx("you used an unsupported feature of dipsh (&&, ||, &, |, ;)");
         dipsh_symbol_clear(root); 
+    }
     dipsh_clean_token_list(list);
     return 0;
 }
