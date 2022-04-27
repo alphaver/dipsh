@@ -32,11 +32,19 @@ typedef struct dipsh_redirect_list_tag
 }
 dipsh_redirect_list;
 
+typedef struct dipsh_command_traits_tag
+{
+    int suspend_after_fork;
+    int run_in_separate_group;
+}
+dipsh_command_traits;
+
 typedef struct dipsh_command_tag dipsh_command;
 
 dipsh_command *
 dipsh_command_init(
-    const dipsh_symbol *command_tree
+    const dipsh_symbol *command_tree,
+    const dipsh_command_traits *traits
 );
 
 void
@@ -77,6 +85,32 @@ dipsh_command_get_argc(
 
 char **
 dipsh_command_get_argv(
+    dipsh_command *command
+);
+
+const dipsh_command_traits *
+dipsh_command_get_traits(
+    const dipsh_command *command
+);
+
+int
+dipsh_command_get_pid(
+    const dipsh_command *command
+);
+
+void
+dipsh_command_set_pid(
+    dipsh_command *command,
+    int pid
+);
+
+int
+dipsh_command_get_suspend_wait_fd(
+    const dipsh_command *command
+);
+
+int
+dipsh_command_start_suspended(
     dipsh_command *command
 );
 

@@ -74,9 +74,11 @@ dipshp_write_to_command_fd(
 )
 {
     const char *command_name = *dipsh_command_get_argv(command);
-    status->exited_normally = 1;
-    status->exited_by_code = 1;
-    status->exit_code = 0;
+    if (status) {
+        status->exited_normally = 1;
+        status->exited_by_code = 1;
+        status->exit_code = 0;
+    }
 
     int result_fd;
     const dipsh_redirect *redir = dipsh_command_get_redirect(
@@ -100,14 +102,16 @@ dipshp_write_to_command_fd(
             warnx("%s: incorrect output file descriptor", command_name);
         else
             warn("%s: can't open file", command_name);
-        status->exit_code = 1;
+        if (status)
+            status->exit_code = 1;
         return dipsh_handler_ok;
     }
     int msg_len = strlen(msg);
     int write_ret = write(result_fd, msg, msg_len);
     if (msg_len != write_ret) {
         warn("%s: writing to file failed", command_name);
-        status->exit_code = 1;
+        if (status)
+            status->exit_code = 1;
     }
     if (should_close_result_fd)
         close(result_fd);
@@ -140,7 +144,7 @@ dipshp_write_fmt_to_command_fd(
 #define DIPSHP_PRINT_ERROR_TO_STDERR(command, status, err)             \
     do {                                                               \
         int ret = dipshp_write_to_command_fd(command, status, 2, err); \
-        if (dipsh_handler_ok == ret)                                   \
+        if (dipsh_handler_ok == ret && status)                         \
             status->exit_code = 1;                                     \
         return ret;                                                    \
     } while (0)
@@ -150,7 +154,7 @@ dipshp_write_fmt_to_command_fd(
         int ret = dipshp_write_fmt_to_command_fd(                      \
             command, status, 2, fmt, __VA_ARGS__                       \
         );                                                             \
-        if (dipsh_handler_ok == ret)                                   \
+        if (dipsh_handler_ok == ret && status)                         \
             status->exit_code = 1;                                     \
         return ret;                                                    \
     } while (0)
@@ -166,9 +170,11 @@ dipshp_handle_cd(
     if (argc > 2 || (argc == 2 && dipshp_is_help_arg(argv[1]))) 
         return dipshp_write_to_command_fd(command, status, 2, DIPSHP_CD_USAGE);
     
-    status->exited_normally = 1;
-    status->exited_by_code = 1;
-    status->exit_code = 0;
+    if (status) { 
+        status->exited_normally = 1;
+        status->exited_by_code = 1;
+        status->exit_code = 0;
+    }
 
     const char *new_wd = argc == 2 ? argv[1] : getenv("HOME");
     if (!new_wd) 
@@ -209,11 +215,10 @@ dipshp_handle_pwd(
 }
 
 static void
-dipshp_execute_external_command(
+dipshp_make_redirs(
     dipsh_command *command
 )
 {
-    char **argv = dipsh_command_get_argv(command);
     const dipsh_redirect_list *redirs = dipsh_command_get_all_redirects(command);
     while (redirs) {
         int fd_to_dup;
@@ -223,9 +228,45 @@ dipshp_execute_external_command(
             fd_to_dup = redirs->redir.inherited_fd;
         int dup_ret = dup2(fd_to_dup, redirs->redir.fd);
         if (-1 == dup_ret)
-            err(1, "%s: failure in dup2()", argv[0]);
+            err(1, "%s: failure in dup2()", *dipsh_command_get_argv(command));
         close(fd_to_dup);
         redirs = redirs->next;
+    }
+}
+
+static int
+dipshp_wait_for_signal(
+    dipsh_command *command
+)
+{
+    char dummy;
+    int wait_fd = dipsh_command_get_suspend_wait_fd(command);
+    return read(wait_fd, &dummy, 1);
+}
+
+static int
+dipshp_create_new_group()
+{
+    return setpgid(0, 0);
+}
+
+static void
+dipshp_execute_external_command(
+    dipsh_command *command
+)
+{
+    char **argv = dipsh_command_get_argv(command);
+    const dipsh_command_traits *traits = dipsh_command_get_traits(command);
+    dipshp_make_redirs(command);
+    if (traits->run_in_separate_group) {
+         int ret = dipshp_create_new_group();
+         if (-1 == ret)
+             err(1, "%s: can't create a new group", argv[0]);
+    }
+    if (traits->suspend_after_fork) {
+        int ret = dipshp_wait_for_signal(command);
+        if (-1 == ret)
+            err(1, "%s: can't wait for command starting", argv[0]);
     }
     execvp(argv[0], argv);
 }
@@ -242,6 +283,7 @@ dipshp_run_external_command(
         dipshp_execute_external_command(command);
         err(1, "%s: can't execute command", command_name);
     } else if (0 < pid) {
+        dipsh_command_set_pid(command, pid);
         int wait_ret = waitpid(pid, command_status, 0);
         if (-1 == wait_ret) {
             warn("%s: can't wait for the command", command_name);
@@ -262,17 +304,19 @@ dipshp_handle_external_command(
 {
     int command_status;
     int ret = dipshp_run_external_command(command, &command_status);
-    if (dipsh_handler_system_error == ret) {
-        status->exited_normally = 0;
-    } else {
-        status->exited_normally = 1;
-        status->exited_by_code = WIFEXITED(command_status);
-        if (status->exited_by_code)
-            status->exit_code = WEXITSTATUS(command_status);
-        else if (WIFSIGNALED(command_status))
-            status->exit_code = WTERMSIG(command_status);
-        else /* something weird */
+    if (status) {
+        if (dipsh_handler_system_error == ret) {
             status->exited_normally = 0;
+        } else {
+            status->exited_normally = 1;
+            status->exited_by_code = WIFEXITED(command_status);
+            if (status->exited_by_code)
+                status->exit_code = WEXITSTATUS(command_status);
+            else if (WIFSIGNALED(command_status))
+                status->exit_code = WTERMSIG(command_status);
+            else /* something weird */
+                status->exited_normally = 0;
+        }
     }
     return ret;
 }

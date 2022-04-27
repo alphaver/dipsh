@@ -48,7 +48,7 @@ dipshp_execute_command(
     const dipsh_symbol *ast
 )
 {
-    dipsh_command *command = dipsh_command_init(ast);
+    dipsh_command *command = dipsh_command_init(ast, NULL);
     if (!command) {
         warnx("command unexpectedly failed");
         return 0;

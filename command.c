@@ -3,13 +3,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 struct dipsh_command_tag
 {
     char **argv;
     int argv_len;
     int argv_cap;
+    
+    int pid;
+
+    int suspend_pipe_fds[2];
+
     dipsh_redirect_list *redir_list;
+    dipsh_command_traits traits;
     dipsh_command_handler handler;
 };
 
@@ -170,15 +178,29 @@ dipshp_add_redir(
     return ret;
 }
 
-dipsh_command *
-dipsh_command_init(
-    const dipsh_symbol *command_tree
+static void
+dipshp_set_default_trait_values(
+    dipsh_command_traits *traits
 )
 {
+    traits->suspend_after_fork = 0;
+    tratis->run_in_separate_group = 1;
+}
+
+dipsh_command *
+dipsh_command_init(
+    const dipsh_symbol *command_tree,
+    const dipsh_command_traits *traits
+)
+{
+    if (dipsh_symbol_command != command_tree->type)
+        return NULL;
+
     dipsh_command *result = calloc(sizeof(dipsh_command), 1);
     result->argv = calloc(sizeof(char*), 1);
     result->argv_len = 1;
     result->argv_cap = 1;
+
     const dipsh_nonterminal_child *children = 
         ((dipsh_nonterminal *)command_tree)->children_list;
     while (children) {
@@ -188,15 +210,31 @@ dipsh_command_init(
             );
         } else if (dipsh_symbol_redir == children->child->type) {
             int not_ok = dipshp_add_redir(result, children->child);
-            if (not_ok) {
-                dipsh_command_destroy(result);
-                return NULL;
-            }
+            if (not_ok) 
+                goto fail;
         }
         children = children->next;
     }
+    
     result->handler = dipsh_get_handler_by_name(result->argv[0]);
+    
+    if (traits)
+        memcpy(&result->traits, traits, sizeof(dipsh_command_traits));
+    else
+        dipshp_set_default_trait_values(&result->traits);
+
+    result->suspend_pipe_fds[0] = -1;
+    result->suspend_pipe_fds[1] = -1;
+    if (result->traits.suspend_after_fork) {
+        int not_ok = pipe2(result->suspend_pipe_fds, O_CLOEXEC);
+        if (-1 == not_ok)
+            goto fail;
+    }
     return result;
+
+fail:
+    dipsh_command_destroy(result);
+    return NULL;
 }
 
 void
@@ -204,6 +242,8 @@ dipsh_command_destroy(
     dipsh_command *command
 )
 {
+    if (!command)
+        return;
     dipshp_clear_argv(command);
     dipshp_clear_file_redirs(command->redir_list);
     free(command);
@@ -258,6 +298,53 @@ dipsh_command_get_argv(
 )
 {
     return command->argv;
+}
+
+const dipsh_command_traits *
+dipsh_command_get_traits(
+    const dipsh_command *command
+)
+{
+    return command->traits;
+}
+
+int
+dipsh_command_get_pid(
+    const dipsh_command *command
+)
+{
+    return command->pid;
+}
+
+void
+dipsh_command_set_pid(
+    dipsh_command *command,
+    int pid
+)
+{
+    command->pid = pid;
+}
+
+int
+dipsh_command_get_suspend_wait_fd(
+    const dipsh_command *command
+)
+{
+    return command->suspend_pipe_fds[0]; 
+}
+
+int
+dipsh_command_start_suspended(
+    dipsh_command *command
+)
+{
+    if (!command->traits.suspend_after_fork)
+        return;
+
+    int ret = write(command->suspend_pipe_fds[1], "", 1);
+    close(command->suspend_pipe_fds[0]);
+    close(command->suspend_pipe_fds[1]);
+    return ret;
 }
 
 int
