@@ -1,5 +1,6 @@
 #include "handler.h"
 #include "command.h"
+#include "change_group.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -221,6 +222,12 @@ dipshp_make_redirs(
 {
     const dipsh_redirect_list *redirs = dipsh_command_get_all_redirects(command);
     while (redirs) {
+        if (dipsh_redir_close == redirs->redir.type) {
+            close(redirs->redir.inherited_fd);
+            redirs = redirs->next;
+            continue;
+        }
+
         int fd_to_dup;
         if (redirs->redir.need_open_file)
             fd_to_dup = dipshp_open_file_redir(&redirs->redir);
@@ -257,7 +264,6 @@ dipshp_execute_external_command(
 {
     char **argv = dipsh_command_get_argv(command);
     const dipsh_command_traits *traits = dipsh_command_get_traits(command);
-    dipshp_make_redirs(command);
     if (traits->run_in_separate_group) {
          int ret = dipshp_create_new_group();
          if (-1 == ret)
@@ -268,26 +274,30 @@ dipshp_execute_external_command(
         if (-1 == ret)
             err(1, "%s: can't wait for command starting", argv[0]);
     }
+    dipshp_make_redirs(command);
     execvp(argv[0], argv);
 }
 
 static int
 dipshp_run_external_command(
-    dipsh_command *command,
-    int *command_status
+    dipsh_command *command
 )
 {
     int pid = fork();
     char *command_name = *dipsh_command_get_argv(command);
+    const dipsh_command_traits *traits = dipsh_command_get_traits(command);
     if (0 == pid) {
         dipshp_execute_external_command(command);
         err(1, "%s: can't execute command", command_name);
     } else if (0 < pid) {
         dipsh_command_set_pid(command, pid);
-        int wait_ret = waitpid(pid, command_status, 0);
-        if (-1 == wait_ret) {
-            warn("%s: can't wait for the command", command_name);
-            return dipsh_handler_system_error;
+        const dipsh_command_status *status;
+        if (traits->execute_blocks) {
+            status = dipsh_wait_for_command(command);
+            if (!status) {
+                warn("%s: can't wait for the command", command_name);
+                return dipsh_handler_system_error;
+            }
         }
         return dipsh_handler_ok;
     } else {
@@ -302,21 +312,12 @@ dipshp_handle_external_command(
     dipsh_command_status *status
 )
 {
-    int command_status;
-    int ret = dipshp_run_external_command(command, &command_status);
-    if (status) {
-        if (dipsh_handler_system_error == ret) {
-            status->exited_normally = 0;
-        } else {
-            status->exited_normally = 1;
-            status->exited_by_code = WIFEXITED(command_status);
-            if (status->exited_by_code)
-                status->exit_code = WEXITSTATUS(command_status);
-            else if (WIFSIGNALED(command_status))
-                status->exit_code = WTERMSIG(command_status);
-            else /* something weird */
-                status->exited_normally = 0;
-        }
+    int ret = dipshp_run_external_command(command);
+    const dipsh_command_traits *traits = dipsh_command_get_traits(command);
+    if (traits->execute_blocks) {
+        const dipsh_command_status *ret_status = dipsh_wait_for_command(command);
+        if (dipsh_handler_ok == ret && status && status != ret_status)
+            memcpy(status, ret_status, sizeof(dipsh_command_status));
     }
     return ret;
 }

@@ -8,6 +8,7 @@ typedef enum dipsh_redir_type_tag
     dipsh_redir_in,
     dipsh_redir_out,
     dipsh_redir_app,
+    dipsh_redir_close,
     dipsh_redir_unknown
 }
 dipsh_redir_type;
@@ -36,6 +37,7 @@ typedef struct dipsh_command_traits_tag
 {
     int suspend_after_fork;
     int run_in_separate_group;
+    int execute_blocks;
 }
 dipsh_command_traits;
 
@@ -65,6 +67,12 @@ dipsh_command_set_fd_redirect(
     dipsh_redir_type redir_type,
     int command_fd, 
     int fd_to_set
+);
+
+int
+dipsh_command_mark_fd_for_close(
+    dipsh_command *command,
+    int fd_to_close
 );
 
 const dipsh_redirect *
@@ -126,10 +134,21 @@ typedef struct dipsh_command_status_tag
 }
 dipsh_command_status;
 
+void
+dipsh_wait_status_to_command_status(
+    int exited_normally,
+    int wait_status,
+    dipsh_command_status *command_status
+);
+
+const dipsh_command_status *
+dipsh_wait_for_command(
+    dipsh_command *command
+);
+
 int
 dipsh_command_execute(
-    dipsh_command *command,
-    dipsh_command_status *status 
+    dipsh_command *command
 );
 
 #endif /* _DIPSH_COMMAND_H_ */

@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 struct dipsh_command_tag
 {
@@ -12,12 +13,19 @@ struct dipsh_command_tag
     int argv_len;
     int argv_cap;
     
+    int pid_set;
     int pid;
+    int no_system_error;
 
     int suspend_pipe_fds[2];
 
     dipsh_redirect_list *redir_list;
     dipsh_command_traits traits;
+
+    int wait_performed;
+    int wait_failed;
+    dipsh_command_status status;
+    
     dipsh_command_handler handler;
 };
 
@@ -80,12 +88,15 @@ dipshp_insert_fd_redir(
     int fd_to_set
 )
 {
-    if (fd < 0)
+    if (fd < 0 && dipsh_redir_close != type)
         return dipsh_redir_incorrect_fd;
     dipsh_redirect_list **curr = redir_list;
     while (*curr) {
-        if ((*curr)->redir.fd == fd)
+        if ((*curr)->redir.fd == fd && 
+            dipsh_redir_close != type && 
+            dipsh_redir_close != (*curr)->redir.type) {
             return dipsh_redir_fd_already_taken;
+        }
         curr = &((*curr)->next);
     }
     /* when a fork is performed, fds remain the same, so, if the new fd and the
@@ -184,7 +195,8 @@ dipshp_set_default_trait_values(
 )
 {
     traits->suspend_after_fork = 0;
-    tratis->run_in_separate_group = 1;
+    traits->run_in_separate_group = 1;
+    traits->execute_blocks = 1;
 }
 
 dipsh_command *
@@ -244,6 +256,8 @@ dipsh_command_destroy(
 {
     if (!command)
         return;
+    if (!command->traits.execute_blocks)
+        dipsh_wait_for_command(command);
     dipshp_clear_argv(command);
     dipshp_clear_file_redirs(command->redir_list);
     free(command);
@@ -259,6 +273,17 @@ dipsh_command_set_fd_redirect(
 {
     return dipshp_insert_fd_redir(
         &command->redir_list, redir_type, command_fd, fd_to_set
+    );
+}
+
+int
+dipsh_command_mark_fd_for_close(
+    dipsh_command *command,
+    int fd_to_close
+)
+{
+    return dipshp_insert_fd_redir(
+        &command->redir_list, dipsh_redir_close, 0, fd_to_close
     );
 }
 
@@ -305,7 +330,7 @@ dipsh_command_get_traits(
     const dipsh_command *command
 )
 {
-    return command->traits;
+    return &command->traits;
 }
 
 int
@@ -322,6 +347,10 @@ dipsh_command_set_pid(
     int pid
 )
 {
+    if (command->pid_set)
+        return;
+
+    command->pid_set = 1;
     command->pid = pid;
 }
 
@@ -339,19 +368,61 @@ dipsh_command_start_suspended(
 )
 {
     if (!command->traits.suspend_after_fork)
-        return;
+        return 1;
 
     int ret = write(command->suspend_pipe_fds[1], "", 1);
     close(command->suspend_pipe_fds[0]);
     close(command->suspend_pipe_fds[1]);
-    return ret;
+    return 1 == ret ? 0 : 1;
+}
+
+void
+dipsh_wait_status_to_command_status(
+    int exited_normally,
+    int wait_status,
+    dipsh_command_status *command_status
+)
+{
+    if (!command_status) 
+       return;
+
+    command_status->exited_normally = exited_normally;
+    if (exited_normally) {
+        command_status->exited_by_code = WIFEXITED(wait_status);
+        if (command_status->exited_by_code)
+            command_status->exit_code = WEXITSTATUS(wait_status);
+        else if (WIFSIGNALED(wait_status))
+            command_status->signal_num = WTERMSIG(wait_status);
+        else /* something weird */
+            command_status->exited_normally = 0;
+    }
+}
+
+const dipsh_command_status *
+dipsh_wait_for_command(
+    dipsh_command *command
+)
+{
+    if (command->wait_performed)
+        return command->wait_failed ? NULL : &command->status;
+
+    command->wait_performed = 1;
+    int wait_status;
+    int wait_ret = waitpid(command->pid, &wait_status, 0);
+    if (-1 == wait_ret) {
+        command->wait_failed = 1;
+        return NULL;
+    }
+    dipsh_wait_status_to_command_status(
+        -1 == wait_ret, wait_status, &command->status
+    );
+    return &command->status;
 }
 
 int
 dipsh_command_execute(
-    dipsh_command *command,
-    dipsh_command_status *status
+    dipsh_command *command
 )
 {
-    return command->handler(command, status);
+    return command->handler(command, &command->status);
 }

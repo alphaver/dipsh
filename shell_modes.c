@@ -1,4 +1,5 @@
 #include "shell_modes.h"
+#include "shell_state.h"
 #include "lexer.h"
 #include "parser.h"
 #include "execute.h"
@@ -7,6 +8,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <err.h>
+#include <signal.h>
 
 #define DIPSHP_BUF_SIZE 128
 
@@ -142,7 +144,8 @@ dipshp_print_parse_tree(
 static int
 dipshp_handle_parsed_list(
     dipsh_token_list *list,
-    dipsh_tokenize_error *err
+    dipsh_tokenize_error *err,
+    dipsh_shell_state *state
 )
 {
     puts("lexical analysis results:");
@@ -179,7 +182,7 @@ dipshp_handle_parsed_list(
         return 1;
     }
     if (root) {
-        int exec_ret = dipsh_execute_ast(root);
+        int exec_ret = dipsh_execute_ast(root, state);
         if (0 != exec_ret)
             warnx("you used an unsupported feature of dipsh (&&, ||, &, |, ;)");
         dipsh_symbol_clear(root); 
@@ -191,6 +194,10 @@ dipshp_handle_parsed_list(
 int
 dipsh_interactive_shell()
 {
+    dipsh_shell_state state = {
+        .is_interactive = 1
+    };
+    signal(SIGTTOU, SIG_IGN);
     for (;;) {
         printf("> ");
         char *read_str = dipshp_read_next_line_from_stdin();
@@ -200,7 +207,7 @@ dipsh_interactive_shell()
         }
         dipsh_tokenize_error err;
         dipsh_token_list *list = dipsh_tokenize_string(read_str, &err);
-        dipshp_handle_parsed_list(list, &err);
+        dipshp_handle_parsed_list(list, &err, &state);
         free(read_str);
         if (feof(stdin))
             break;
@@ -214,12 +221,15 @@ dipsh_execute_script(
     const char *script_name
 )
 {
+    dipsh_shell_state state = {
+        .is_interactive = 0
+    };
     FILE *script = fopen(script_name, "r");
     if (!script)
         err(1, "can't open file '%s'", script_name);
     dipsh_tokenize_error err;
     dipsh_token_list *list = dipsh_tokenize_stream(script, &err);
-    int ret = dipshp_handle_parsed_list(list, &err);
+    int ret = dipshp_handle_parsed_list(list, &err, &state);
     fclose(script);
     return ret;
 }
