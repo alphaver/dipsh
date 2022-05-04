@@ -18,6 +18,7 @@ struct dipsh_command_tag
     int no_system_error;
 
     int suspend_pipe_fds[2];
+    int group_signal_pipe_fds[2];
 
     dipsh_redirect_list *redir_list;
     dipsh_command_traits traits;
@@ -25,7 +26,8 @@ struct dipsh_command_tag
     int wait_performed;
     int wait_failed;
     dipsh_command_status status;
-    
+   
+    int is_builtin; 
     dipsh_command_handler handler;
 };
 
@@ -196,6 +198,7 @@ dipshp_set_default_trait_values(
 {
     traits->suspend_after_fork = 0;
     traits->run_in_separate_group = 1;
+    traits->will_wait_for_group_change = 0;
     traits->execute_blocks = 1;
 }
 
@@ -229,6 +232,7 @@ dipsh_command_init(
     }
     
     result->handler = dipsh_get_handler_by_name(result->argv[0]);
+    result->is_builtin = dipsh_has_builtin_handler(result->argv[0]);
     
     if (traits)
         memcpy(&result->traits, traits, sizeof(dipsh_command_traits));
@@ -242,6 +246,15 @@ dipsh_command_init(
         if (-1 == not_ok)
             goto fail;
     }
+    result->group_signal_pipe_fds[0] = -1;
+    result->group_signal_pipe_fds[1] = -1;
+    if (result->traits.run_in_separate_group && 
+        result->traits.will_wait_for_group_change) {
+        int not_ok = pipe2(result->group_signal_pipe_fds, O_CLOEXEC);
+        if (-1 == not_ok)
+            goto fail;
+    }
+
     return result;
 
 fail:
@@ -363,6 +376,14 @@ dipsh_command_get_suspend_wait_fd(
 }
 
 int
+dipsh_command_is_builtin(
+    const dipsh_command *command
+)
+{
+    return command->is_builtin;
+}
+
+int
 dipsh_command_start_suspended(
     dipsh_command *command
 )
@@ -373,6 +394,27 @@ dipsh_command_start_suspended(
     int ret = write(command->suspend_pipe_fds[1], "", 1);
     close(command->suspend_pipe_fds[0]);
     close(command->suspend_pipe_fds[1]);
+    return 1 == ret ? 0 : 1;
+}
+
+int
+dipsh_command_signal_group_change(
+    dipsh_command *command
+)
+{
+    int ret = write(command->group_signal_pipe_fds[1], "", 1);
+    return 1 == ret ? 0 : 1;
+}
+
+int
+dipsh_command_wait_for_group_change(
+    dipsh_command *command
+)
+{
+    char dummy;
+    int ret = read(command->group_signal_pipe_fds[0], &dummy, 1);
+    close(command->group_signal_pipe_fds[0]);
+    close(command->group_signal_pipe_fds[1]);
     return 1 == ret ? 0 : 1;
 }
 
@@ -407,15 +449,15 @@ dipsh_wait_for_command(
         return command->wait_failed ? NULL : &command->status;
 
     command->wait_performed = 1;
-    int wait_status;
-    int wait_ret = waitpid(command->pid, &wait_status, 0);
-    if (-1 == wait_ret) {
-        command->wait_failed = 1;
-        return NULL;
+    if (!command->is_builtin) {
+        int wait_status;
+        int wait_ret = waitpid(command->pid, &wait_status, 0);
+        if (-1 == wait_ret) {
+            command->wait_failed = 1;
+            return NULL;
+        }
+        dipsh_wait_status_to_command_status(1, wait_status, &command->status);
     }
-    dipsh_wait_status_to_command_status(
-        -1 == wait_ret, wait_status, &command->status
-    );
     return &command->status;
 }
 

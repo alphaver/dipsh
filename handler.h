@@ -17,4 +17,9 @@ dipsh_get_handler_by_name(
     const char *command_name
 );
 
+int
+dipsh_has_builtin_handler(
+    const char *command_name
+);
+
 #endif /* _DIPSH_HANDLER_H_ */

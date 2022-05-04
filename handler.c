@@ -192,27 +192,34 @@ dipshp_handle_cd(
 }
 
 static int
-dipshp_handle_pwd(
+dipshp_handle_exit_code_only(
+    dipsh_command *command,
+    dipsh_command_status *status,
+    int exit_code
+)
+{
+    status->exited_normally = 1;
+    status->exited_by_code = 1;
+    status->exit_code = exit_code;
+    return 0;
+}
+
+static int
+dipshp_handle_true(
     dipsh_command *command,
     dipsh_command_status *status
 )
 {
-    int argc = dipsh_command_get_argc(command);
-    if (argc > 1) 
-        return dipshp_write_to_command_fd(command, status, 2, DIPSHP_PWD_USAGE);
-    
-    char *pwd_buf = get_current_dir_name();
-    if (!pwd_buf) {
-        DIPSHP_PRINT_FMT_ERROR_TO_STDERR(
-            command, status,
-            "pwd: can't get the current directory: %s\n", 
-            strerror(errno)
-        );
-    }
-    int ret = dipshp_write_to_command_fd(command, status, 1, pwd_buf);
-    ret = dipshp_write_to_command_fd(command, status, 1, "\n");
-    free(pwd_buf);
-    return ret;
+    return dipshp_handle_exit_code_only(command, status, 0);
+}
+
+static int
+dipshp_handle_false(
+    dipsh_command *command,
+    dipsh_command_status *status
+)
+{
+    return dipshp_handle_exit_code_only(command, status, 1);
 }
 
 static void
@@ -268,6 +275,11 @@ dipshp_execute_external_command(
          int ret = dipshp_create_new_group();
          if (-1 == ret)
              err(1, "%s: can't create a new group", argv[0]);
+         if (traits->will_wait_for_group_change) {
+             ret = dipsh_command_signal_group_change(command);
+             if (0 != ret)
+                 err(1, "%s: can't signal a group change", argv[0]);
+         }
     }
     if (traits->suspend_after_fork) {
         int ret = dipshp_wait_for_signal(command);
@@ -332,7 +344,8 @@ dipshp_handler_traits;
 static const dipshp_handler_traits
 dipshp_handlers[] = {
     { "cd", dipshp_handle_cd },
-    { "pwd", dipshp_handle_pwd },
+    { "true", dipshp_handle_true },
+    { "false", dipshp_handle_false },
     { NULL, dipshp_handle_external_command }
 };
 
@@ -348,4 +361,13 @@ dipsh_get_handler_by_name(
         ++traits;
     }
     return dipshp_handle_external_command;
+}
+
+int
+dipsh_has_builtin_handler(
+    const char *command_name
+)
+{
+    return dipshp_handle_external_command != 
+        dipsh_get_handler_by_name(command_name);
 }

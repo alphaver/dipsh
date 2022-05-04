@@ -20,12 +20,14 @@ struct dipsh_pipeline_tag
 static const dipsh_command_traits dipshp_pipeline_command_traits = {
     .suspend_after_fork = 1,
     .run_in_separate_group = 0,
+    .will_wait_for_group_change = 0,
     .execute_blocks = 0
 };
 
 static const dipsh_command_traits dipshp_pipeline_first_command_traits = {
     .suspend_after_fork = 1,
     .run_in_separate_group = 1,
+    .will_wait_for_group_change = 1,
     .execute_blocks = 0
 };
 
@@ -84,6 +86,7 @@ dipsh_pipeline_destroy(
         return;
     for (int i = 0; i < pipeline->commands_len; ++i)
         dipsh_command_destroy(pipeline->commands[i]);
+    free(pipeline->commands);
     free(pipeline);
 }
 
@@ -171,7 +174,7 @@ dipshp_pipeline_change_group(
 )
 {
     int new_pgid = dipsh_command_get_pid(pipeline->commands[0]);
-    int ret = 0;
+    int ret = dipsh_command_wait_for_group_change(pipeline->commands[0]);
     for (int i = 1; i < pipeline->commands_len && 0 == ret; ++i)
         ret = setpgid(dipsh_command_get_pid(pipeline->commands[i]), new_pgid);
     return ret;

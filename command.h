@@ -37,6 +37,7 @@ typedef struct dipsh_command_traits_tag
 {
     int suspend_after_fork;
     int run_in_separate_group;
+    int will_wait_for_group_change;
     int execute_blocks;
 }
 dipsh_command_traits;
@@ -118,7 +119,22 @@ dipsh_command_get_suspend_wait_fd(
 );
 
 int
+dipsh_command_is_builtin(
+    const dipsh_command *command
+);
+
+int
 dipsh_command_start_suspended(
+    dipsh_command *command
+);
+
+int
+dipsh_command_signal_group_change(
+    dipsh_command *command
+);
+
+int
+dipsh_command_wait_for_group_change(
     dipsh_command *command
 );
 

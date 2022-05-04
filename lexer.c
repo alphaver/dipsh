@@ -451,8 +451,8 @@ dipshp_insert_new_token(
         *first = new_token;
     } else {
         (*last)->next = new_token;
-        new_token->next = NULL;
     }
+    new_token->next = NULL;
     *last = new_token;
 }
 

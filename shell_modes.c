@@ -59,8 +59,10 @@ dipshp_read_next_line_from_stdin()
     char *read_str = calloc(1, 1), read_buf[DIPSHP_BUF_SIZE] = {0};
     while (!non_escaped_nl_found) {
         char *fgets_ret = fgets(read_buf, DIPSHP_BUF_SIZE, stdin);
-        if (!fgets_ret) /* normally meaning EOF */
+        if (!fgets_ret) { /* normally meaning EOF */
+            free(read_str);
             return NULL;
+        }
         dipshp_append_buffer(&read_str, read_buf);
         non_escaped_quotes += dipshp_num_non_escaped_quotes(read_buf);
         char *nl_pos = strrchr(read_buf, '\n');
@@ -141,24 +143,47 @@ dipshp_print_parse_tree(
     dipshp_print_parse_subtree(root, 0);
 }
 
+static void
+dipshp_handle_bg_finished_cb(
+    int pid,
+    const dipsh_command_status *status
+)
+{
+    printf("[%d] ", pid);
+    if (!status->exited_normally)
+        printf("Abnormal exit");
+    else if (status->exited_by_code)
+        printf("Exited with code %d", status->exit_code);
+    else 
+        printf("Caught signal SIG%s", sigabbrev_np(status->signal_num));
+    putchar('\n');
+}
+
 static int
 dipshp_handle_parsed_list(
     dipsh_token_list *list,
     dipsh_tokenize_error *err,
-    dipsh_shell_state *state
+    dipsh_shell_state *state,
+    int show_parsing_info
 )
 {
-    puts("lexical analysis results:");
+    if (show_parsing_info)
+        puts("lexical analysis results:");
     if (list) {
         int idx = 0;
-        for (const dipsh_token_list *curr = list; curr; curr = curr->next, ++idx) {
-            char *esc_val = dipshp_escape_non_printables(curr->token.value);
-            printf(
-                "token %d: type %s, value [%s]\n", 
-                idx, dipsh_type_to_str(curr->token.type), esc_val 
-            );
-            free(esc_val);
+        if (show_parsing_info) {
+            for (const dipsh_token_list *curr = list; 
+                 curr; curr = curr->next, ++idx) {
+                char *esc_val = dipshp_escape_non_printables(curr->token.value);
+                printf(
+                    "token %d: type %s, value [%s]\n", 
+                    idx, dipsh_type_to_str(curr->token.type), esc_val 
+                );
+                free(esc_val);
+            }
         }
+        if (!list->next && dipsh_token_newline == list->token.type)
+            return 0;
     } else {
         char *esc_msg = dipshp_escape_non_printables(err->message);
         warnx("line %d: %s", err->line, esc_msg);
@@ -170,21 +195,24 @@ dipshp_handle_parsed_list(
     dipsh_symbol *root = NULL;
     char *parser_err = NULL;
     int parser_ret = dipsh_parse_token_list(list, &root, &parser_err);
-    puts("parsing results:");
+    if (show_parsing_info)
+        puts("parsing results:");
     if (dipsh_parser_accepted == parser_ret) {
         dipsh_make_ast(&root);
-        dipshp_print_parse_tree(root);
+        if (show_parsing_info)
+            dipshp_print_parse_tree(root);
     } else {
         char *esc_msg = dipshp_escape_non_printables(parser_err);
         warnx(esc_msg);
         free(esc_msg);
         free(parser_err);
+        dipsh_clean_token_list(list);
         return 1;
     }
     if (root) {
-        int exec_ret = dipsh_execute_ast(root, state);
-        if (0 != exec_ret)
-            warnx("you used an unsupported feature of dipsh (&&, ||, &, |, ;)");
+        int ret = dipsh_execute_ast(root, state);
+        if (ret)
+            warnx("can't execute the command till the end");
         dipsh_symbol_clear(root); 
     }
     dipsh_clean_token_list(list);
@@ -192,7 +220,9 @@ dipshp_handle_parsed_list(
 }
 
 int
-dipsh_interactive_shell()
+dipsh_interactive_shell(
+    int show_parsing_info
+)
 {
     dipsh_shell_state state = {
         .is_interactive = 1
@@ -207,8 +237,11 @@ dipsh_interactive_shell()
         }
         dipsh_tokenize_error err;
         dipsh_token_list *list = dipsh_tokenize_string(read_str, &err);
-        dipshp_handle_parsed_list(list, &err, &state);
+        dipshp_handle_parsed_list(list, &err, &state, show_parsing_info);
         free(read_str);
+        dipsh_shell_state_clear_finished_bg_commands(
+            &state, dipshp_handle_bg_finished_cb
+        );
         if (feof(stdin))
             break;
     }
@@ -218,7 +251,8 @@ out:
 
 int
 dipsh_execute_script(
-    const char *script_name
+    const char *script_name,
+    int show_parsing_info
 )
 {
     dipsh_shell_state state = {
@@ -229,7 +263,7 @@ dipsh_execute_script(
         err(1, "can't open file '%s'", script_name);
     dipsh_tokenize_error err;
     dipsh_token_list *list = dipsh_tokenize_stream(script, &err);
-    int ret = dipshp_handle_parsed_list(list, &err, &state);
+    int ret = dipshp_handle_parsed_list(list, &err, &state, show_parsing_info);
     fclose(script);
     return ret;
 }
